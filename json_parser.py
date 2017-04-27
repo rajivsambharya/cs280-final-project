@@ -1,4 +1,5 @@
 import sys
+import os
 # import numpy as np
 # import scipy as sp
 # from cvxpy import *
@@ -13,29 +14,45 @@ import ffmpy
 
 
 def main(argv):
-	# with open('train_val_videodatainfo.json') as data_file:
-	# 	data = json.load(data_file)
+	with open('train_val_videodatainfo.json') as data_file:
+		data = json.load(data_file)
 
-	# pprint(data)
+	videos = data["videos"]
 
-	yt = YouTube("http://www.youtube.com/watch?v=Ik-RsDGPI5Y")
-	title = 'Dancing Scene from Pulp Fiction'
-	yt.set_filename(title)
+	print 'length', len(videos)
 
-	# # Once set, you can see all the codec and quality options YouTube has made
-	# # available for the perticular video by printing videos.
 
-	# print(yt.get_videos())
+	COOKING_CATEGORY = 17
 
-	video = yt.get('mp4', '720p')
-	video.download('')
 
-	timestamp = '00:00:59'
-	output_filename = 'out_59.jpg'
+	for i in range(len(videos)):
+		curr_video = videos[i]
+		if curr_video['category'] == COOKING_CATEGORY:
+			try:
+				curr_video = videos[i]
 
-	ff = ffmpy.FFmpeg(inputs={title + '.mp4': None}, outputs={output_filename: '-ss ' + timestamp + '  -vframes 1'})
-	print ff.cmd
-	ff.run()
+				time_start = curr_video['start time']
+				time_end = curr_video['end time']
+				duration = time_end - time_start
+				yt = YouTube(curr_video['url'])
+
+				title = 'video' + str(i)
+				yt.set_filename(title)
+				video = yt.get('3gp', '144p')
+				newpath = '%d/' %(i) 
+				if not os.path.exists(newpath):
+				    os.makedirs(newpath)
+				video.download(newpath)
+
+				ff = ffmpy.FFmpeg(inputs={newpath + title + '.3gp': None}, outputs={newpath + 'out%d.jpg': '-ss ' + str(time_start) + ' -t ' + str(duration) +  ' -vf fps=1 '})
+				print ff.cmd
+				ff.run()
+			except:
+				print 'SOME ERROR OCCURRED'
+
+			
+
+
 
 if __name__ == '__main__':
 	main(sys.argv[1:])
