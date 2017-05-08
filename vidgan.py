@@ -74,12 +74,16 @@ class Model:
         self.saver.save(self.sess, self.ckpt_dir)
 
     def __init__(self):
+    
+        # toggle training
+        self.train = True 
+
         # hyperparams
-        self.learn_rate = 1e-4
         self.bn_decay = 0.99
         self.epsilon = 1e-3
 
         gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.85)
+        #with tf.device('/cpu:0'):
         self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 
         self.train_gen = tf.placeholder(tf.bool)
@@ -90,13 +94,13 @@ class Model:
         with tf.variable_scope(g):
             self.x = tf.placeholder(tf.float32, [None, 1, 128, 128, 3])
             
-            self.c1 = self.conv(self.x, [1, 3, 3, 3, 16], [16], self.train_gen, g, 'c1')
+            self.c1 = self.conv(self.x, [1, 5, 5, 3, 16], [16], self.train_gen, g, 'c1')
             self.u1 = self.unpool(self.c1, 'u1')
             #self.d1 = self.deconv(self.c1, [2, 3, 3, 32, 32], [32], self.train_gen, g, 'd1')
-            self.c2 = self.conv(self.u1, [2, 3, 3, 16, 32], [32], self.train_gen, g, 'c2')
+            self.c2 = self.conv(self.u1, [2, 5, 5, 16, 32], [32], self.train_gen, g, 'c2')
             self.u2 = self.unpool(self.c2, 'u2')
             #self.d2 = self.deconv(self.c2, [4, 3, 3, 64, 64], [64], self.train_gen, g, 'd2')
-            self.c3 = self.conv(self.u2, [4, 3, 3, 32, 16], [16], self.train_gen, g, 'c3')
+            self.c3 = self.conv(self.u2, [4, 5, 5, 32, 16], [16], self.train_gen, g, 'c3')
             self.u3 = self.unpool(self.c3, 'u3')
             #self.d3 = self.deconv(self.c3, [8, 3, 3, 128, 128], [128], self.train_gen, g, 'd3')
             #self.c4 = self.conv(self.u3, [8, 3, 3, 64, 32], [32], self.train_gen, g, 'c4')
@@ -105,8 +109,10 @@ class Model:
             #self.c5 = self.conv(self.u4, [16, 3, 3, 32, 16], [16], self.train_gen, g, 'c5')
             #self.u5 = self.unpool(self.c5, 'u5')
             #self.d5 = self.deconv(self.c5, [32, 3, 3, 32, 32], [32], self.train_gen, g, 'd5')
-            self.c6 = self.last_conv(self.u3, [8, 3, 3, 16, 3], [3], self.train_gen, g, 'c6')
-            self.gen = tf.tanh(self.c6)
+            self.c4 = self.conv(self.u3, [8, 5, 5, 16, 8], [8], self.train_gen, g, 'c4')
+            self.c5 = self.conv(self.c4, [8, 5, 5, 8, 3], [3], self.train_gen, g, 'c5', last=True)
+            #tf.summary.histogram('generator_conv4', self.c4)
+            self.gen = tf.sigmoid(self.c5)
 
             self.g = tf.concat([self.x, self.gen], axis=1)
 
@@ -127,7 +133,8 @@ class Model:
             self.p3 = self.pool(self.h3, [1, 2, 2, 2, 1], 'p3')
             self.h4 = self.conv(self.p3, [3, 3, 3, 16, 8], [8], self.train_dis, d, 'h4')
             self.p4 = self.pool(self.h4, [1, 2, 4, 4, 1], 'p4')
-            self.h5 = self.conv(self.p4, [3, 3, 3, 8, 1], [1], self.train_dis, d, 'h5')
+            self.h5 = self.conv(self.p4, [3, 3, 3, 8, 1], [1], self.train_dis, d, 'h5', last=True)
+            #tf.summary.histogram('discriminator_conv5', self.h5)
             self.p5 = self.pool(self.h5, [1, 3, 4, 4, 1], 'p5')
 
             self.dis = tf.sigmoid(tf.reshape(self.p5, [-1, 1]))
@@ -135,79 +142,149 @@ class Model:
             self.dg = tf.slice(self.dis, [0, 0], [tf.shape(self.g)[0], 1])
 
         with tf.variable_scope('loss'):
-            self.dis_loss = -tf.reduce_mean(self.l*tf.log(self.dis)+(1-self.l)*tf.log(1-self.dis))
-            self.gen_loss = -tf.reduce_mean((1-self.x_l)*tf.log(self.dg)+self.x_l*tf.log(1-self.dg))
+            self.dis_loss = -tf.reduce_mean(self.l*tf.log(self.dis+1e-8) +
+                                           (1-self.l)*tf.log(1-self.dis+1e-8))
+            self.gen_loss = -tf.reduce_mean((1-self.x_l)*tf.log(self.dg+1e-8) + 
+                                            self.x_l*tf.log(1-self.dg+1e-8))
             tf.summary.scalar('discriminator_loss', self.dis_loss)
             tf.summary.scalar('generator_loss', self.gen_loss)
 
             self.dis_step = tf.train.AdamOptimizer(1e-4).minimize(self.dis_loss,
                                                                   var_list=tf.get_collection(d))
-            self.gen_step = tf.train.AdamOptimizer(1e-4).minimize(self.gen_loss,
+            self.gen_step = tf.train.AdamOptimizer(1e-3).minimize(self.gen_loss,
                                                                   var_list=tf.get_collection(g))
         
         self.saver = tf.train.Saver()
         self.f_dir = 'frameonly'
         self.ckpt_dir = self.f_dir + '/checkpoints'
         self.log_dir = self.f_dir + '/logs'
-        if False:
-            latest_ckpt = tf.train.latest_checkpoint(self.dir)
+        if not self.train:
+            latest_ckpt = tf.train.latest_checkpoint(self.f_dir)
             print('Loading {}'.format(latest_ckpt))
             self.saver.restore(self.sess, latest_ckpt)
+            self.merged = tf.summary.merge_all()
+            self.writer = tf.summary.FileWriter(self.log_dir, self.sess.graph)
         else:
             self.merged = tf.summary.merge_all()
             self.writer = tf.summary.FileWriter(self.log_dir, self.sess.graph)
             self.sess.run(tf.global_variables_initializer())
 
-
 model = Model()
 data_files = os.listdir('vehicles_auto_fps_5')
-train_idx_gen = [i for i in range(450)]
-train_idx_dis = [i for i in range(450)]
+train_idx_gen1 = [i for i in range(450)]
+train_idx_gen2 = [i for i in range(450)]
+train_idx_dis1 = [i for i in range(450)]
+train_idx_dis2 = [i for i in range(450)]
 val_idx = [i for i in range(450, len(data_files))]
-num_epochs = 10
+num_epochs = 100
 step = 0
-for epoch in range(num_epochs):
-    print('Epoch {}'.format(epoch+1))
-    random.shuffle(train_idx_gen)
-    random.shuffle(train_idx_dis)
-    for i in range(len(train_idx_gen)):
-        step += 1
-        frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_gen[i]]+'/')
-        x = []
-        fr = [l for l in range(len(frames)-9)]
-        if len(frames)-9 > 30:
-            random.shuffle(fr)
-            fr = fr[:30]
-        if len(fr) != 0:
-            for j in fr:
-                x.append(np.array([frames[j]]))
-            x = np.array(x)
-            y = np.zeros((0, 9, 128, 128, 3))
-            x_l = np.zeros((x.shape[0], 1))
-            y_l = np.ones((0, 1))
-            fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
-                  model.train_gen:True, model.train_dis:False}
-            model.sess.run(model.gen_step, feed_dict=fd)
-        frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_dis[i]]+'/')
-        x = []
-        y = []
-        fr = [l for l in range(len(frames)-9)]
-        if len(frames)-9 > 30:
-            random.shuffle(fr)
-            fr = fr[:30]
-        if len(fr) != 0:
-            for j in fr:
-                x.append(np.array([frames[j]]))
-                y_idx = []
-                for k in range(j, j+9):
-                    y_idx.append(frames[k])
-                y.append(np.array(y_idx))
-            x = np.array(x)
-            y = np.array(y)
-            x_l = np.zeros((x.shape[0], 1))
-            y_l = np.ones((y.shape[0], 1))
-            fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
-                  model.train_gen:False, model.train_dis:True}
-            summary,_ = model.sess.run([model.merged, model.dis_step], feed_dict=fd)
-            model.writer.add_summary(summary, step)
-    model.save()
+max_batch_size = 60
+if model.train:
+    for epoch in range(num_epochs):
+        print('Epoch {}'.format(epoch+1))
+        random.shuffle(train_idx_gen1)
+        random.shuffle(train_idx_gen2)
+        random.shuffle(train_idx_dis1)
+        random.shuffle(train_idx_dis2)
+        for i in range(len(train_idx_gen1)):
+            step += 2
+
+            # train generator 1
+            frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_gen1[i]]+'/')
+            x = []
+            fr = [l for l in range(len(frames)-9)]
+            if len(frames)-9 > max_batch_size:
+                random.shuffle(fr)
+                fr = fr[:max_batch_size]
+            if len(fr) != 0:
+                for j in fr:
+                    x.append(np.array([frames[j]]))
+                x = np.array(x)
+                y = np.zeros((0, 9, 128, 128, 3))
+                x_l = np.zeros((x.shape[0], 1))
+                y_l = np.ones((0, 1))
+                fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
+                      model.train_gen:True, model.train_dis:False}
+                model.sess.run(model.gen_step, feed_dict=fd)
+
+            # train generator 2
+            frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_gen2[i]]+'/')
+            x = []
+            fr = [l for l in range(len(frames)-9)]
+            if len(frames)-9 > max_batch_size:
+                random.shuffle(fr)
+                fr = fr[:max_batch_size]
+            if len(fr) != 0:
+                for j in fr:
+                    x.append(np.array([frames[j]]))
+                x = np.array(x)
+                y = np.zeros((0, 9, 128, 128, 3))
+                x_l = np.zeros((x.shape[0], 1))
+                y_l = np.ones((0, 1))
+                fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
+                      model.train_gen:True, model.train_dis:False}
+                model.sess.run(model.gen_step, feed_dict=fd)
+
+            # train discriminator 1
+            if epoch > 20:
+                frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_dis1[i]]+'/')
+                x = []
+                y = []
+                fr = [l for l in range(len(frames)-9)]
+                if len(frames)-9 > max_batch_size:
+                    random.shuffle(fr)
+                    fr = fr[:max_batch_size]
+                if len(fr) != 0:
+                    bad_num = len(fr) // 2
+                    for j in range(len(fr)):
+                        y_idx = []
+                        if j < bad_num // 2:
+                            for k in range(9):
+                                y_idx.append(frames[j])
+                        else:
+                            for k in range(j, j+9):
+                                y_idx.append(frames[k])
+                            if j < bad_num:
+                                random.shuffle(y_idx)
+                        y.append(np.array(y_idx))
+                    x = np.ones((0, 1, 128, 128, 3))
+                    y = np.array(y)
+                    x_l = np.zeros((bad_num, 1))
+                    y_l = np.ones((y.shape[0] - bad_num, 1))
+                    fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
+                          model.train_gen:False, model.train_dis:True}
+                    model.sess.run(model.dis_step, feed_dict=fd)
+            
+            # train discriminator 2
+            frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[train_idx_dis2[i]]+'/')
+            x = []
+            y = []
+            fr = [l for l in range(len(frames)-9)]
+            if len(frames)-9 > max_batch_size // 2:
+                random.shuffle(fr)
+                fr = fr[:max_batch_size // 2]
+            if len(fr) != 0:
+                for j in fr:
+                    x.append(np.array([frames[j]]))
+                    y_idx = []
+                    for k in range(j, j+9):
+                        y_idx.append(frames[k])
+                    y.append(np.array(y_idx))
+                x = np.array(x)
+                y = np.array(y)
+                x_l = np.zeros((x.shape[0], 1))
+                y_l = np.ones((y.shape[0], 1))
+                fd = {model.x:x, model.y:y, model.x_l:x_l, model.y_l:y_l,
+                      model.train_gen:False, model.train_dis:True}
+                summary,_ = model.sess.run([model.merged, model.dis_step], feed_dict=fd)
+                model.writer.add_summary(summary, step)
+        model.save()
+else:
+    lst = [train_idx_gen1[0], val_idx[0]]
+    for idx in lst:
+        frames = iton.images_to_numpy('vehicles_auto_fps_5/'+data_files[idx]+'/')
+        start = random.randint(0, len(frames)-9)
+        x = np.array([[frames[start]]])
+        fd = {model.x:x, model.train_gen:False}
+        pred_video = model.sess.run(model.g, feed_dict=fd)
+        np.save('generated_video/'+data_files[idx], pred_video)
